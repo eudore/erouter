@@ -327,6 +327,12 @@ func (r *fullNode) InsertNode(path string, nextNode *fullNode) *fullNode {
 			}
 		}
 		r.Cchildren = append(r.Cchildren, nextNode)
+		// 常量node按照首字母排序。
+		for i := len(r.Cchildren) - 1; i > 0; i-- {
+			if r.Cchildren[i].path[0] < r.Cchildren[i-1].path[0] {
+				r.Cchildren[i], r.Cchildren[i-1] = r.Cchildren[i-1], r.Cchildren[i]
+			}
+		}
 	case fullNodeKindParam:
 		// parameter node
 		// 参数节点
@@ -472,7 +478,7 @@ func (r *fullNode) recursiveLoopup(searchKey string, params Params) Handler {
 
 	// constant match, return data
 	// 常量匹配，返回数据
-	if len(searchKey) == 0 && r.handlers != nil {
+	if len(searchKey) == 0 {
 		r.AddTagsToParams(params)
 		return r.handlers
 	}
@@ -480,10 +486,12 @@ func (r *fullNode) recursiveLoopup(searchKey string, params Params) Handler {
 	// Traverse constant Node match
 	// 遍历常量Node匹配
 	for _, edgeObj := range r.Cchildren {
-		if contrainPrefix(searchKey, edgeObj.path) {
-			nextSearchKey := searchKey[len(edgeObj.path):]
-			if n := edgeObj.recursiveLoopup(nextSearchKey, params); n != nil {
-				return n
+		if edgeObj.path[0] >= searchKey[0] {
+			if len(searchKey) >= len(edgeObj.path) && searchKey[:len(edgeObj.path)] == edgeObj.path {
+				nextSearchKey := searchKey[len(edgeObj.path):]
+				if n := edgeObj.recursiveLoopup(nextSearchKey, params); n != nil {
+					return n
+				}
 			}
 			break
 		}

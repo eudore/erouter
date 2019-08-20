@@ -273,6 +273,12 @@ func (r *radixNode) InsertNode(path string, nextNode *radixNode) *radixNode {
 			}
 		}
 		r.Cchildren = append(r.Cchildren, nextNode)
+		// 常量node按照首字母排序。
+		for i := len(r.Cchildren) - 1; i > 0; i-- {
+			if r.Cchildren[i].path[0] < r.Cchildren[i-1].path[0] {
+				r.Cchildren[i], r.Cchildren[i-1] = r.Cchildren[i-1], r.Cchildren[i]
+			}
+		}
 	case radixNodeKindParam:
 		for _, i := range r.Pchildren {
 			if i.path == path {
@@ -365,19 +371,20 @@ func (r *RouterRadix) getTree(method string) *radixNode {
 // 依次检查常量节点、参数节点、通配符节点，如果有一个匹配就直接返回。
 func (r *radixNode) recursiveLoopup(searchKey string, params Params) Handler {
 	// 如果路径为空，当前节点就是需要匹配的节点，直接返回。
-	if len(searchKey) == 0 && r.handlers != nil {
+	if len(searchKey) == 0 {
 		r.AddTagsToParams(params)
 		return r.handlers
 	}
 
 	// 遍历常量Node匹配，寻找具有相同前缀的那个节点
 	for _, edgeObj := range r.Cchildren {
-		if contrainPrefix(searchKey, edgeObj.path) {
-			nextSearchKey := searchKey[len(edgeObj.path):]
-			if n := edgeObj.recursiveLoopup(nextSearchKey, params); n != nil {
-				return n
+		if edgeObj.path[0] >= searchKey[0] {
+			if len(searchKey) >= len(edgeObj.path) && searchKey[:len(edgeObj.path)] == edgeObj.path {
+				nextSearchKey := searchKey[len(edgeObj.path):]
+				if n := edgeObj.recursiveLoopup(nextSearchKey, params); n != nil {
+					return n
+				}
 			}
-			// TODO: 待优化测试，只有一个相同前缀，当前应该直接退出遍历
 			break
 		}
 	}
@@ -468,29 +475,6 @@ func getSplitPath(key string) []string {
 		strs[length] = strs[length] + key[i:i+1]
 	}
 	return strs
-}
-
-// Modify the last string to end with the specified byte.
-//
-// 修改最后一个字符串结尾为指定byte。
-func lastappend(strs []string, b byte) {
-	num := len(strs) - 1
-	laststr := strs[num]
-	if laststr[len(laststr)-1] != b {
-		strs[num] = strs[num] + string(b)
-	}
-}
-
-// Check if the end of the last string is the specified byte.
-//
-// 检测最后一个字符串的结尾是否为指定byte。
-func lastisbyte(strs []string, b byte) bool {
-	num := len(strs) - 1
-	if num < 0 {
-		return false
-	}
-	laststr := strs[num]
-	return laststr[len(laststr)-1] == b
 }
 
 // Get the largest common prefix of the two strings,

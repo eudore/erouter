@@ -151,9 +151,50 @@ curl -H 'Host: www.example.com' -XPUT 127.0.0.1:8080
 curl -H 'Host: www.example.com' -Xput 127.0.0.1:8080
 ```
 
+# Middleware
+
+```golang
+package main
+
+import (
+	"net/http"
+	"github.com/eudore/erouter"
+	"github.com/eudore/erouter/middleware"
+)
+
+func main() {
+	router := erouter.NewRouterRadix()
+	router.AddMiddleware("ANY", "", 
+		middleware.NewLoggerFunc(),
+		middleware.NewCors(nil, map[string]string{
+			"Access-Control-Allow-Credentials": "true",
+			"Access-Control-Allow-Headers": "Authorization,DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,X-Parent-Id",	
+			"Access-Control-Expose-Headers": "X-Request-Id",
+			"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, HEAD",
+			"Access-Control-Max-Age": "1000",
+		}).NewMiddleware(),
+		middleware.NewCircuitBreaker().InjectRoutes(router.Group("/debug/breaker")).NewMiddleware(),
+		middleware.NewRate(10, 30).NewMiddleware(),
+	)
+	router.Any("/*", func(w http.ResponseWriter, r *http.Request, p erouter.Params) {
+		w.Write([]byte("hello\n"))
+	})
+	router.Get("/api/*action version=v0", func(w http.ResponseWriter, _ *http.Request, p erouter.Params) {
+		w.Write([]byte("access api " + p.GetParam("version") +": " + p.GetParam("action") + "\n"))
+	})
+	router.Get("/api/v1/*action version=v1", func(w http.ResponseWriter, _ *http.Request, p erouter.Params) {
+		w.Write([]byte("access api " + p.GetParam("version") +": " + p.GetParam("action") + "\n"))
+	})
+	apiv2 := router.Group("/api/v2 version=v2")
+	apiv2.Any("/*action", func(w http.ResponseWriter, _ *http.Request, p erouter.Params) {
+		w.Write([]byte("access api " + p.GetParam("version") +": " + p.GetParam("action") + "\n"))
+	})
+	http.ListenAndServe(":8080", router)
+}
+```
 # Benchmark
 
-使用GithubApi进行[Benchmark性能测试](https://github.com/eudore/web-framework-benchmark)，Erouter匹配性能仅有httprouter的60%，但是具有严格路由匹配顺序、易扩展重写和代码复杂度低的特点。
+使用GithubApi进行[Benchmark性能测试](https://github.com/eudore/web-framework-benchmark)，Erouter匹配性能静态路由具有httprouter的70%，api匹配性能具有90%且内存分配仅消耗httprouter六分之一，但是具有严格路由匹配顺序、易扩展重写和代码复杂度低的特点。
 
 测试命令：
 
@@ -168,20 +209,20 @@ go test -bench=router github.com/eudore/web-framework-benchmark
 goos: linux
 goarch: amd64
 pkg: github.com/eudore/web-framework-benchmark
-BenchmarkHttprouterStatic-2        	   50000	     25518 ns/op	    1949 B/op	     157 allocs/op
-BenchmarkHttprouterGitHubAPI-2     	   30000	     57961 ns/op	   16571 B/op	     370 allocs/op
-BenchmarkHttprouterGplusAPI-2      	  500000	      2747 ns/op	     813 B/op	      24 allocs/op
-BenchmarkHttprouterParseAPI-2      	  300000	      3886 ns/op	     963 B/op	      42 allocs/op
-BenchmarkErouterRadixStatic-2      	   30000	     44147 ns/op	    2412 B/op	     157 allocs/op
-BenchmarkErouterRadixGitHubAPI-2   	   20000	     63756 ns/op	    2501 B/op	     203 allocs/op
-BenchmarkErouterRadixGplusAPI-2    	  500000	      2653 ns/op	     173 B/op	      13 allocs/op
-BenchmarkErouterRadixParseAPI-2    	  300000	      4523 ns/op	     323 B/op	      26 allocs/op
-BenchmarkErouterFullStatic-2       	   30000	     43923 ns/op	    2413 B/op	     157 allocs/op
-BenchmarkErouterFullGitHubAPI-2    	   20000	     65698 ns/op	    2503 B/op	     203 allocs/op
-BenchmarkErouterFullGplusAPI-2     	  500000	      2582 ns/op	     173 B/op	      13 allocs/op
-BenchmarkErouterFullParseAPI-2     	  300000	      5990 ns/op	     323 B/op	      26 allocs/op
+BenchmarkHttprouterStatic-2        	   50000	     25686 ns/op	    1949 B/op	     157 allocs/op
+BenchmarkHttprouterGitHubAPI-2     	   30000	     52997 ns/op	   16571 B/op	     370 allocs/op
+BenchmarkHttprouterGplusAPI-2      	  500000	      2570 ns/op	     813 B/op	      24 allocs/op
+BenchmarkHttprouterParseAPI-2      	  500000	      3791 ns/op	     986 B/op	      42 allocs/op
+BenchmarkErouterRadixStatic-2      	   50000	     34314 ns/op	    1950 B/op	     157 allocs/op
+BenchmarkErouterRadixGitHubAPI-2   	   30000	     57850 ns/op	    2786 B/op	     203 allocs/op
+BenchmarkErouterRadixGplusAPI-2    	  500000	      2468 ns/op	     173 B/op	      13 allocs/op
+BenchmarkErouterRadixParseAPI-2    	  300000	      4551 ns/op	     323 B/op	      26 allocs/op
+BenchmarkErouterFullStatic-2       	   50000	     34728 ns/op	    1950 B/op	     157 allocs/op
+BenchmarkErouterFullGitHubAPI-2    	   30000	     62151 ns/op	    2787 B/op	     203 allocs/op
+BenchmarkErouterFullGplusAPI-2     	  500000	      2570 ns/op	     173 B/op	      13 allocs/op
+BenchmarkErouterFullParseAPI-2     	  300000	      4362 ns/op	     323 B/op	      26 allocs/op
 PASS
-ok  	github.com/eudore/web-framework-benchmark	19.934s
+ok  	github.com/eudore/web-framework-benchmark	22.356s
 ```
 
 # Api
