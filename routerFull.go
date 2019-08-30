@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	fullNodeKindConst    uint8 = iota // 常量
-	fullNodeKindRegex                 // 参数正则或函数校验
-	fullNodeKindParam                 // 参数
-	fullNodeKindValid                 // 通配符正则或函数校验
-	fullNodeKindWildcard              // 通配符
+	fullNodeKindConst    uint8 = 1 << iota // 常量
+	fullNodeKindRegex                      // 参数正则或函数校验
+	fullNodeKindParam                      // 参数
+	fullNodeKindValid                      // 通配符正则或函数校验
+	fullNodeKindWildcard                   // 通配符
+	fullNodeKindAnyMethod
 )
 
 type (
@@ -153,10 +154,10 @@ func (r *RouterFull) RegisterHandler(method string, path string, handler Handler
 		r.node405.Wchildren.handlers = CombineHandler(handler, r.middtree.val)
 	case MethodAny:
 		for _, method := range RouterAllMethod {
-			r.insertRoute(method, path, CombineHandler(handler, r.middtree.Lookup(method+path)))
+			r.insertRoute(method, path, true, CombineHandler(handler, r.middtree.Lookup(method+path)))
 		}
 	default:
-		r.insertRoute(method, path, CombineHandler(handler, r.middtree.Lookup(method+path)))
+		r.insertRoute(method, path, false, CombineHandler(handler, r.middtree.Lookup(method+path)))
 	}
 }
 
@@ -167,7 +168,7 @@ func (r *RouterFull) RegisterHandler(method string, path string, handler Handler
 // 添加一个新的路由Node。
 //
 // 如果方法不支持则不会添加，请求改路径会响应405
-func (r *RouterFull) insertRoute(method, key string, val Handler) {
+func (r *RouterFull) insertRoute(method, key string, isany bool, val Handler) {
 	var currentNode *fullNode = r.getTree(method)
 	if currentNode == &r.node405 {
 		return
@@ -177,6 +178,13 @@ func (r *RouterFull) insertRoute(method, key string, val Handler) {
 	args := strings.Split(key, " ")
 	for _, path := range getSplitPath(args[0]) {
 		currentNode = currentNode.InsertNode(path, newFullNode(path))
+	}
+
+	if isany {
+		if currentNode.kind&fullNodeKindAnyMethod != fullNodeKindAnyMethod && currentNode.handlers != nil {
+			return
+		}
+		currentNode.kind |= fullNodeKindAnyMethod
 	}
 
 	currentNode.handlers = val
@@ -310,7 +318,7 @@ func (r *fullNode) InsertNode(path string, nextNode *fullNode) *fullNode {
 	}
 	nextNode.path = path
 	switch nextNode.kind {
-	case radixNodeKindConst:
+	case fullNodeKindConst:
 		for i := range r.Cchildren {
 			subStr, find := getSubsetPrefix(path, r.Cchildren[i].path)
 			if find {
@@ -478,53 +486,55 @@ func (r *fullNode) recursiveLoopup(searchKey string, params Params) Handler {
 
 	// constant match, return data
 	// 常量匹配，返回数据
-	if len(searchKey) == 0 {
+	if len(searchKey) == 0 && r.handlers != nil {
 		r.AddTagsToParams(params)
 		return r.handlers
 	}
 
-	// Traverse constant Node match
-	// 遍历常量Node匹配
-	for _, edgeObj := range r.Cchildren {
-		if edgeObj.path[0] >= searchKey[0] {
-			if len(searchKey) >= len(edgeObj.path) && searchKey[:len(edgeObj.path)] == edgeObj.path {
-				nextSearchKey := searchKey[len(edgeObj.path):]
-				if n := edgeObj.recursiveLoopup(nextSearchKey, params); n != nil {
-					return n
+	if len(searchKey) > 0 {
+		// Traverse constant Node match
+		// 遍历常量Node匹配
+		for _, edgeObj := range r.Cchildren {
+			if edgeObj.path[0] >= searchKey[0] {
+				if len(searchKey) >= len(edgeObj.path) && searchKey[:len(edgeObj.path)] == edgeObj.path {
+					nextSearchKey := searchKey[len(edgeObj.path):]
+					if n := edgeObj.recursiveLoopup(nextSearchKey, params); n != nil {
+						return n
+					}
+				}
+				break
+			}
+		}
+
+		// parameter matching
+		// Check if there is a parameter match
+		// 参数匹配
+		// 检测是否存在参数匹配
+		if r.pnum != 0 {
+			pos := strings.IndexByte(searchKey, '/')
+			if pos == -1 {
+				pos = len(searchKey)
+			}
+			currentKey, nextSearchKey := searchKey[:pos], searchKey[pos:]
+
+			// check parameter matching
+			// 校验参数匹配
+			for _, edgeObj := range r.Rchildren {
+				if edgeObj.check(currentKey) {
+					if n := edgeObj.recursiveLoopup(nextSearchKey, params); n != nil {
+						params.AddParam(edgeObj.name, currentKey)
+						return n
+					}
 				}
 			}
-			break
-		}
-	}
 
-	// parameter matching
-	// Check if there is a parameter match
-	// 参数匹配
-	// 检测是否存在参数匹配
-	if r.pnum != 0 && len(searchKey) > 0 {
-		pos := strings.IndexByte(searchKey, '/')
-		if pos == -1 {
-			pos = len(searchKey)
-		}
-		currentKey, nextSearchKey := searchKey[:pos], searchKey[pos:]
-
-		// check parameter matching
-		// 校验参数匹配
-		for _, edgeObj := range r.Rchildren {
-			if edgeObj.check(currentKey) {
+			// 参数匹配
+			// 变量Node依次匹配是否满足
+			for _, edgeObj := range r.Pchildren {
 				if n := edgeObj.recursiveLoopup(nextSearchKey, params); n != nil {
 					params.AddParam(edgeObj.name, currentKey)
 					return n
 				}
-			}
-		}
-
-		// 参数匹配
-		// 变量Node依次匹配是否满足
-		for _, edgeObj := range r.Pchildren {
-			if n := edgeObj.recursiveLoopup(nextSearchKey, params); n != nil {
-				params.AddParam(edgeObj.name, currentKey)
-				return n
 			}
 		}
 	}
